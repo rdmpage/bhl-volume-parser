@@ -22,7 +22,8 @@ Trivial example of volume and year:
   "parsed": true,
   "volume": ["101"],
   "issued": { "date-parts": [[2004]] }
-}```
+}
+```
 
 
 ### v.31:pt.3-4 (1926-1927)
