@@ -10,6 +10,8 @@
 //
 //   $result->parsed             true if anything useful was extracted
 //   $result->volume             array of volume strings
+//   $result->part               array of part strings, when the volume is split twice
+//                               over ("v.13:pt.5B:no.1" is volume 13, part 5B, issue 1)
 //   $result->issue              array of issue strings
 //   $result->{'collection-title'} array of series strings
 //   $result->issued->{'date-parts'} CSL date-parts, e.g. [[2002],[2003]]
@@ -895,6 +897,13 @@ function bhl_collect_enumeration($tokens, &$bareYears, &$qualifiers, &$notes, &$
 		switch ($t['type'])
 		{
 			case 'label':
+				// "no. 1-no. 2" - the label is repeated at both ends of one range, so
+				// keep filling the item we already have
+				if ($pendingRange && $current !== null && count($current['values']) > 0)
+				{
+					break;
+				}
+
 				// "31.Jahr." - the number came first
 				if ($pendingLabel === null && $current !== null && $current['label'] === null
 					&& count($current['values']) > 0 && !bhl_next_is_value($tokens, $i))
@@ -985,7 +994,10 @@ function bhl_collect_enumeration($tokens, &$bareYears, &$qualifiers, &$notes, &$
 				break;
 
 			case 'range':
-				$pendingRange = $lastWasValue;
+				// whitespace clears $lastWasValue, so ask the item directly - otherwise
+				// "Vol 26 - Vol 27" would not be read as a range
+				$pendingRange = ($current !== null && count($current['values']) > 0)
+					|| $lastWasBareYear;
 				break;
 
 			case 'ordinal':
@@ -1210,7 +1222,8 @@ function bhl_next_is_bare_value($tokens, $i)
 // designation on its own.
 function bhl_designation($items, $titles, $bestRank = null)
 {
-	$designation = array('volume' => array(), 'issue' => array(), 'collection-title' => $titles);
+	$designation = array('volume' => array(), 'part' => array(), 'issue' => array(),
+		'collection-title' => $titles);
 
 	// $bestRank is fixed by the caller when the record as a whole already has a volume: a
 	// "no." beside a "v." is an issue, even in a designation of its own.
@@ -1231,6 +1244,8 @@ function bhl_designation($items, $titles, $bestRank = null)
 	}
 
 	$haveVolume = false;
+	$subdivisions = array();
+	$blocks = array();
 
 	foreach ($items as $item)
 	{
@@ -1261,10 +1276,61 @@ function bhl_designation($items, $titles, $bestRank = null)
 		{
 			$designation['volume'] = array_merge($designation['volume'], $item['values']);
 			$haveVolume = true;
+
+			// each volume gets its own run of subdivisions, so that the two "no." in
+			// "v.25:no.1-4;v.26:no.1-4" are not read as a hierarchy
+			if (count($subdivisions) > 0)
+			{
+				$blocks[] = $subdivisions;
+				$subdivisions = array();
+			}
 		}
 		else
 		{
-			$designation['issue'] = array_merge($designation['issue'], $item['values']);
+			$subdivisions[] = $item;
+		}
+	}
+
+	if (count($subdivisions) > 0)
+	{
+		$blocks[] = $subdivisions;
+	}
+
+	// One subdivision is the issue, whatever it is labelled: "v.28:pt.3-4" is issue 3-4.
+	//
+	// Two or more means the volume is split twice over, as in "v.13:pt.5B:no.1" or the
+	// German "Bd.6:Abt.4:T.2", and the level between volume and issue is CSL "part". A
+	// number-like label ("no.") is the issue wherever it sits, because it can be either
+	// coarser ("v.13:pt.2:no.2") or finer ("v.37:no.2:fasc.5-8") than its neighbour;
+	// otherwise the innermost subdivision is the issue.
+	foreach ($blocks as $block)
+	{
+		if (count($block) == 1)
+		{
+			$designation['issue'] = array_merge($designation['issue'], $block[0]['values']);
+			continue;
+		}
+
+		$issueAt = null;
+
+		foreach ($block as $k => $item)
+		{
+			if ($item['rank'] == 3)
+			{
+				$issueAt = $k;
+				break;
+			}
+		}
+
+		if ($issueAt === null)
+		{
+			$issueAt = count($block) - 1;
+		}
+
+		foreach ($block as $k => $item)
+		{
+			$field = ($k == $issueAt) ? 'issue' : 'part';
+			$designation[$field] = array_merge($designation[$field], $item['values']);
 		}
 	}
 
@@ -1423,6 +1489,7 @@ function parse_volume($text)
 	$overall = bhl_designation($items, array());
 
 	$volume   = $overall['volume'];
+	$part     = $overall['part'];
 	$issue    = $overall['issue'];
 	$series   = $overall['collection-title'];
 	$bestRank = $overall['rank'];
@@ -1457,7 +1524,7 @@ function parse_volume($text)
 
 			$entry = new stdclass;
 
-			foreach (array('volume', 'issue', 'collection-title') as $field)
+			foreach (array('volume', 'part', 'issue', 'collection-title') as $field)
 			{
 				if (count($designation[$field]) > 0)
 				{
@@ -1488,7 +1555,7 @@ function parse_volume($text)
 	}
 
 	// "(1983)" - the whole designation is a date, so the year is also the volume
-	if (count($volume) == 0 && count($issue) == 0 && !$prose && trim($s) == ''
+	if (count($volume) == 0 && count($issue) == 0 && count($part) == 0 && !$prose && trim($s) == ''
 		&& count($points) > 0 && $points[0]['y'] !== null)
 	{
 		$years = array();
@@ -1503,12 +1570,18 @@ function parse_volume($text)
 	}
 
 	$volume = array_values(array_unique($volume));
+	$part   = array_values(array_unique($part));
 	$issue  = array_values(array_unique($issue));
 	$series = array_values(array_unique($series));
 
 	if (count($volume) > 0)
 	{
 		$obj->volume = $volume;
+	}
+
+	if (count($part) > 0)
+	{
+		$obj->part = $part;
 	}
 
 	if (count($issue) > 0)
@@ -1565,8 +1638,8 @@ function parse_volume($text)
 		$obj->note = $notes;
 	}
 
-	$obj->parsed = (count($volume) > 0 || count($issue) > 0 || count($dateParts) > 0
-		|| count($series) > 0);
+	$obj->parsed = (count($volume) > 0 || count($part) > 0 || count($issue) > 0
+		|| count($dateParts) > 0 || count($series) > 0);
 
 	// Report and archive series are designated by a code rather than a volume, e.g.
 	// "PA-146", "Technical note-5", "NE-INF-1-2". Record the code as CSL "number".

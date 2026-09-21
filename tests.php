@@ -5,8 +5,9 @@
 //
 //   php tests.php
 //
-// Each test is: input, then the expected volume, issue, series and date-parts. Use '-' for
-// "expect nothing". Date-parts are written as JSON.
+// Each test is: input, then the expected volume, issue, series and date-parts, and
+// optionally the expected part. Use '-' for "expect nothing", which is also the default
+// for part. Date-parts are written as JSON.
 //----------------------------------------------------------------------------------------
 
 require_once (dirname(__FILE__) . '/parse-volume.php');
@@ -142,6 +143,26 @@ $tests = array(
 	array('Technical note-20',            '-',        '-',          '-',  '-'),
 	array('PA-146',                       '-',        '-',          '-',  '-'),
 
+	// --- a volume split twice over: volume / part / issue ------------------------------
+	//                                    volume  issue  series  date          part
+	array('v.13:pt.5B:no.1 (1962)',       '13',   '1',   '-',  '[[1962]]',     '5B'),
+	array('Bd.6:Abt.4:T.2 (1893)',        '6',    '2',   '-',  '[[1893]]',     '4'),
+	array('Jahrg.72:Bd.2:Heft.2 (1906)',  '72',   '2',   '-',  '[[1906]]',     '2'),
+
+	// "no." is the issue whether it is coarser or finer than its neighbour
+	array('v.13:pt.2:no.2 (1919)',        '13',   '2',   '-',  '[[1919]]',     '2'),
+	array('v.37:no.2:fasc.5-8 (2001)',    '37',   '2',   '-',  '[[2001]]',     '5,6,7,8'),
+
+	// one subdivision is just the issue, whatever it is labelled
+	array('v.28:pt.3-4 (1922)',           '28',   '3,4', '-',  '[[1922]]'),
+	array('ser.4:v.4:sem.2 (1888)',       '4',    '2',   '4',  '[[1888]]'),
+	array('Bd.5:Abt.2 (1907)',            '5',    '2',   '-',  '[[1907]]'),
+
+	// --- a range with the label repeated at both ends ----------------------------------
+	array('Vol. 32 : no. 3 - no. 4 (1962)', '32', '3,4', '-',  '[[1962]]'),
+	array('Vol 26 - Vol 27',              '26,27','-',   '-',  '-'),
+	array('no. 3-no. 5 (1900)',           '3,4,5','-',   '-',  '[[1900]]'),
+
 	// --- things that are not enumeration ----------------------------------------------
 	array('Box 3: Folder 2: Pinus: undated', '-',     '-',          '-',  '-'),
 	array('"Sender Barnes, Charles R., 1856-1910"', '-', '-',       '-',  '[[1856],[1910]]'),
@@ -202,6 +223,9 @@ function actual($obj, $field)
 		case 'volume':
 			return isset($obj->volume) ? implode(',', $obj->volume) : '-';
 
+		case 'part':
+			return isset($obj->part) ? implode(',', $obj->part) : '-';
+
 		case 'issue':
 			return isset($obj->issue) ? implode(',', $obj->issue) : '-';
 
@@ -221,9 +245,12 @@ foreach ($tests as $test)
 {
 	list($text, $volume, $issue, $series, $date) = $test;
 
+	$part = isset($test[5]) ? $test[5] : '-';
+
 	$obj = parse_volume($text);
 
-	$expected = array('volume' => $volume, 'issue' => $issue, 'series' => $series, 'date' => $date);
+	$expected = array('volume' => $volume, 'part' => $part, 'issue' => $issue,
+		'series' => $series, 'date' => $date);
 	$problems = array();
 
 	foreach ($expected as $field => $want)
