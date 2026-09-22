@@ -70,3 +70,7 @@ Dates with months
 
 
 
+
+## Special cases
+
+These strings contain a lot of eccentricities, and the parser makes a number of deliberate choices about how to handle them, such as treating a lone `no.` as a volume. Those choices, together with the cases that are still unresolved, are listed in [SPECIAL-CASES.md](SPECIAL-CASES.md).
